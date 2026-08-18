@@ -1,14 +1,11 @@
 import { defineManifest } from "@crxjs/vite-plugin"
+import { loadEnv } from "vite"
+
 import pkg from "./package.json" with { type: "json" }
 
 export default defineManifest(async (env) => {
-  let name = "FB Auto Inviter"
-
-  const isDev = env.mode === "development"
-
-  if (isDev) {
-    name = `[DEV] ${name}`
-  }
+  const envVars = loadEnv(env.mode, process.cwd(), "")
+  const name = envVars.VITE_APP_NAME
 
   return {
     manifest_version: 3,
@@ -36,6 +33,6 @@ export default defineManifest(async (env) => {
       },
     ],
     permissions: ["storage", "tabs"],
-    host_permissions: ["https://*.facebook.com/*"],
+    host_permissions: ["https://business.facebook.com/*"],
   }
 })

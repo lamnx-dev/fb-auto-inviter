@@ -1,6 +1,6 @@
-import { STORAGE_KEYS } from "../shared/constants"
+import { getSession, setSession } from "../shared/session"
 import type { AutomationSession } from "../shared/types"
-import { clickElement, delay, waitForElement, waitUntil } from "./domUtils"
+import { delay, waitForElement, waitUntil } from "./domUtils"
 import {
   detectRateLimit,
   findInviteButton,
@@ -15,7 +15,6 @@ export class AutomationEngine {
   private session: AutomationSession = {
     running: false,
     lastSentAt: null,
-    error: null,
   }
   private abortController: AbortController | null = null
 
@@ -32,14 +31,7 @@ export class AutomationEngine {
 
   private async syncSessionFromStorage(): Promise<void> {
     try {
-      if (typeof chrome !== "undefined" && chrome.storage?.local) {
-        const data = await chrome.storage.local.get(STORAGE_KEYS.SESSION)
-        const stored = data[STORAGE_KEYS.SESSION] as
-          Partial<AutomationSession> | undefined
-        if (stored && typeof stored === "object") {
-          this.session = { ...this.session, ...stored }
-        }
-      }
+      this.session = await getSession()
     } catch {
       // Storage fallback
     }
@@ -54,14 +46,9 @@ export class AutomationEngine {
     }
 
     try {
-      if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
-        await chrome.runtime.sendMessage({
-          type: "STATUS_CHANGED",
-          payload: this.session,
-        })
-      }
+      await setSession(this.session)
     } catch {
-      // Worker sleeping fallback
+      // Storage fallback
     }
   }
 
@@ -69,26 +56,26 @@ export class AutomationEngine {
     return { ...this.session }
   }
 
-  public async start(): Promise<void> {
+  public async start(): Promise<{ success: boolean; error?: string }> {
     if (this.session.running) {
-      return
+      return { success: true }
     }
 
     this.abortController = new AbortController()
     const signal = this.abortController.signal
 
-    await this.updateSession({ running: true, error: null })
+    await this.updateSession({ running: true })
 
     try {
       await this.runLoop(signal)
+      return { success: true }
     } catch (err) {
+      await this.updateSession({ running: false })
       const isAbort = err instanceof DOMException && err.name === "AbortError"
-      const message = isAbort
-        ? null
-        : err instanceof Error
-          ? err.message
-          : String(err)
-      await this.updateSession({ running: false, error: message })
+      if (isAbort) return { success: true }
+
+      const message = err instanceof Error ? err.message : String(err)
+      return { success: false, error: message }
     }
   }
 
@@ -101,21 +88,14 @@ export class AutomationEngine {
   }
 
   private async runLoop(signal: AbortSignal): Promise<void> {
-    let isFirstIteration = true
-
     while (this.session.running && !signal.aborted) {
-      const inviteBtn = isFirstIteration
-        ? findInviteButton()
-        : await waitForElement<HTMLElement>(() => findInviteButton(), {
-            signal,
-          })
-      isFirstIteration = false
+      const inviteBtn = findInviteButton()
 
       if (!inviteBtn) {
         throw new Error('Vui lòng cuộn xuống tìm nút "Gửi lời mời"')
       }
 
-      clickElement(inviteBtn)
+      inviteBtn.click()
 
       const dialog = await waitForElement<HTMLElement>(
         () => findInviteDialog(),
@@ -132,7 +112,7 @@ export class AutomationEngine {
 
       await waitUntil(
         () => {
-          if (detectRateLimit(dialog)) {
+          if (detectRateLimit()) {
             isLimited = true
             return true
           }

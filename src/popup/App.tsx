@@ -1,16 +1,19 @@
-import { Button } from "@/components/ui/button"
 import { ExternalLink, HelpCircle, Play, Square } from "lucide-react"
 import { useEffect, useState } from "react"
-import { BUSINESS_SUITE_HOME_URL } from "../shared/constants"
+
+import { Button } from "@/components/ui/button"
+
+import {
+  BUSINESS_SUITE_HOME_URL,
+  BUSINESS_SUITE_ORIGIN,
+} from "../shared/constants"
+import { getSession } from "../shared/session"
 import type { AutomationSession } from "../shared/types"
 
 const initialSession: AutomationSession = {
   running: false,
   lastSentAt: null,
-  error: null,
 }
-
-const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000
 
 function formatLastSent(timestamp: number | null): string {
   if (!timestamp) return "Chưa gửi lần nào"
@@ -25,54 +28,68 @@ function formatLastSent(timestamp: number | null): string {
 export default function App() {
   const [session, setSession] = useState<AutomationSession>(initialSession)
   const [showGuide, setShowGuide] = useState(false)
-
-  const fetchStatus = () => {
-    if (typeof chrome === "undefined" || !chrome.runtime) return
-
-    chrome.runtime.sendMessage(
-      { type: "GET_STATUS" },
-      (response: AutomationSession) => {
-        if (response) setSession(response)
-      }
-    )
-  }
+  const [isBusinessSuite, setIsBusinessSuite] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetchStatus()
+    let isMounted = true
 
-    const messageListener = (msg: { type: string; payload?: unknown }) => {
-      if (msg.type === "STATUS_CHANGED" && msg.payload) {
-        setSession(msg.payload as AutomationSession)
+    const checkTab = async () => {
+      if (typeof chrome !== "undefined" && chrome.tabs?.query) {
+        const [activeTab] = await chrome.tabs.query({
+          active: true,
+          currentWindow: true,
+        })
+        const onSuite = Boolean(
+          activeTab?.url && activeTab.url.startsWith(BUSINESS_SUITE_ORIGIN)
+        )
+        if (isMounted) setIsBusinessSuite(onSuite)
       }
     }
 
-    if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
-      chrome.runtime.onMessage.addListener(messageListener)
+    const updateState = async () => {
+      const state = await getSession()
+      if (isMounted) setSession(state)
+      await checkTab()
     }
+
+    updateState()
+
+    const listener = async (
+      _changes: unknown,
+      areaName: chrome.storage.AreaName
+    ) => {
+      if (areaName === "local") {
+        await updateState()
+      }
+    }
+
+    chrome.storage.onChanged.addListener(listener)
 
     return () => {
-      if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
-        chrome.runtime.onMessage.removeListener(messageListener)
-      }
-      if (typeof chrome !== "undefined" && chrome.runtime) {
-        chrome.runtime.sendMessage({ type: "CLEAR_ERROR" }).catch(() => {})
-      }
+      isMounted = false
+      chrome.storage.onChanged.removeListener(listener)
     }
   }, [])
 
   const handleStart = () => {
-    chrome.runtime.sendMessage({ type: "START_AUTOMATION" }, () =>
-      fetchStatus()
+    setError(null)
+    chrome.runtime.sendMessage(
+      { type: "START_AUTOMATION" },
+      (res: { success?: boolean; error?: string } | undefined) => {
+        if (res && !res.success && res.error) {
+          setError(res.error)
+        }
+      }
     )
   }
 
   const handleStop = () => {
-    chrome.runtime.sendMessage({ type: "STOP_AUTOMATION" }, () => fetchStatus())
+    setError(null)
+    chrome.runtime.sendMessage({ type: "STOP_AUTOMATION" })
   }
 
-  const isOverdue =
-    !session.lastSentAt ||
-    Date.now() - session.lastSentAt >= TWENTY_FOUR_HOURS_MS
+  const appName = import.meta.env.VITE_APP_NAME
 
   return (
     <div className="flex w-72 flex-col overflow-hidden bg-background text-foreground antialiased">
@@ -81,16 +98,15 @@ export default function App() {
         <div className="flex items-center gap-2.5">
           <img
             src="/logo.png"
-            alt="FB Invite Manager Logo"
+            alt={`${appName} Logo`}
             className="h-8 w-8 rounded-lg border border-border object-contain shadow-xs"
           />
           <div>
             <h1 className="text-sm leading-tight font-semibold text-foreground">
-              FB Invite Manager
+              {appName}
             </h1>
             <p className="text-xs text-muted-foreground">
               {formatLastSent(session.lastSentAt)}
-              {isOverdue && session.lastSentAt ? " · >24h" : ""}
             </p>
           </div>
         </div>
@@ -103,21 +119,6 @@ export default function App() {
             aria-label="Hướng dẫn sử dụng"
           >
             <HelpCircle className="text-muted-foreground hover:text-foreground" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            asChild
-            title="Mở Facebook Business Suite"
-          >
-            <a
-              href={BUSINESS_SUITE_HOME_URL}
-              target="_blank"
-              rel="noreferrer"
-              aria-label="Mở Facebook Business Suite"
-            >
-              <ExternalLink className="text-muted-foreground hover:text-foreground" />
-            </a>
           </Button>
         </div>
       </div>
@@ -135,6 +136,18 @@ export default function App() {
             <Square className="fill-white" />
             <span>Dừng Automation</span>
           </Button>
+        ) : !isBusinessSuite ? (
+          <Button size="lg" asChild className="w-full">
+            <a
+              href={BUSINESS_SUITE_HOME_URL}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Mở trang Facebook Business Suite"
+            >
+              <ExternalLink />
+              <span>Mở trang Facebook Business Suite</span>
+            </a>
+          </Button>
         ) : (
           <Button
             size="lg"
@@ -146,9 +159,7 @@ export default function App() {
             <span>Bắt đầu</span>
           </Button>
         )}
-        {session.error && (
-          <p className="mt-2 text-xs text-destructive">{session.error}</p>
-        )}
+        {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
       </div>
 
       {/* Guideline section */}

@@ -19,45 +19,6 @@ export async function delay(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
-export function clickElement(
-  el: HTMLElement,
-  options: { skipScroll?: boolean } = {}
-): void {
-  if (!options.skipScroll) {
-    try {
-      el.scrollIntoView({ block: "nearest", behavior: "instant" })
-    } catch {
-      // Ignore scroll errors
-    }
-  }
-
-  // Full React Synthetic Event Sequence: pointerdown -> mousedown -> mouseup -> click
-  const events = ["pointerdown", "mousedown", "mouseup", "click"]
-
-  for (const eventName of events) {
-    const evt = new MouseEvent(eventName, {
-      bubbles: true,
-      cancelable: true,
-      view: window,
-      buttons: 1,
-    })
-    el.dispatchEvent(evt)
-  }
-
-  try {
-    el.click()
-  } catch {
-    // Ignore direct click errors
-  }
-}
-
-export function findByRole(
-  role: string,
-  container: ParentNode = document
-): HTMLElement[] {
-  return Array.from(container.querySelectorAll<HTMLElement>(`[role="${role}"]`))
-}
-
 export async function waitUntil(
   predicate: () => boolean | Promise<boolean>,
   options: {
@@ -67,7 +28,7 @@ export async function waitUntil(
   } = {}
 ): Promise<boolean> {
   const timeoutMs = options.timeoutMs ?? 5000
-  const intervalMs = options.intervalMs ?? 500
+  const intervalMs = options.intervalMs ?? 1000
   const signal = options.signal
   const startTime = Date.now()
 
